@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TransmiEye · Transmitir cámara</title>
+  <link rel="stylesheet" href="css/style.css">
+  <style>
+    .transmisor { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 18px; }
+    .pantalla { position: relative; background: #1B232B; border-radius: var(--r); overflow: hidden; aspect-ratio: 4 / 3; }
+    .pantalla video, .pantalla img { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .pantalla .rotulo { position: absolute; left: 10px; top: 10px; background: rgba(16,22,28,.85); color: #fff; font-size: 13px;
+      font-weight: 600; padding: 3px 10px; border-radius: 4px; display: flex; align-items: center; gap: 7px; }
+    .pantalla .rotulo i { width: 9px; height: 9px; border-radius: 50%; background: #8796A3; }
+    .pantalla.vivo .rotulo i { background: #FF3B3B; animation: latido 1.4s infinite; }
+    .pantalla .vacio { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center;
+      color: #B9C4CE; padding: 24px; }
+    @keyframes latido { 50% { opacity: .3; } }
+    .lecturas-tx { display: flex; gap: 22px; flex-wrap: wrap; color: var(--tinta-2); font-size: 14px; margin-top: 14px; }
+    .lecturas-tx b { color: var(--tinta); font-variant-numeric: tabular-nums; font-size: 18px; display: block; }
+    .btn-grande { padding: 11px 20px; font-size: 16px; }
+    @media (max-width: 900px) { .transmisor { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<main>
+  <div class="cabecera">
+    <div><h1>Transmitir cámara</h1>
+      <p>Usa la cámara de este celular o computador como cámara de la estación. El video se envía al servidor, que detecta los cruces y genera las alertas igual que con una cámara fija.</p></div>
+  </div>
+
+  <div id="aviso-https" class="banda rojo oculto">El navegador solo permite usar la cámara en páginas seguras (https) o en localhost. Abre TransmiEye con su enlace https.</div>
+  <div id="aviso-sin" class="banda azul oculto">No hay cámaras de tipo navegador. Un administrador debe crearla en <a href="camaras.html">Cámaras → Agregar cámara → Celular o navegador</a>.</div>
+
+  <section class="bloque">
+    <div class="filtros" style="margin-bottom:0">
+      <div class="campo"><label for="t-cam">Cámara del sistema</label><select id="t-cam"></select></div>
+      <div class="campo"><label for="t-disp">Cámara de este dispositivo</label><select id="t-disp"><option value="">Trasera (recomendada)</option></select></div>
+      <div class="campo"><label for="t-cal">Calidad</label><select id="t-cal">
+        <option value="640">Liviana · 640 px (datos móviles)</option><option value="960" selected>Normal · 960 px</option><option value="1280">Alta · 1280 px (wifi)</option></select></div>
+      <div class="campo"><label for="t-fps">Cuadros por segundo</label><select id="t-fps">
+        <option value="4">4</option><option value="6">6</option><option value="8" selected>8</option><option value="12">12</option></select></div>
+      <button class="btn primario btn-grande" id="t-boton">Iniciar transmisión</button>
+    </div>
+  </section>
+
+  <div class="transmisor">
+    <section>
+      <h2>Lo que ve este dispositivo</h2>
+      <div class="pantalla" id="p-local"><video id="video" playsinline muted></video>
+        <div class="rotulo"><i></i><span id="r-local">Cámara apagada</span></div>
+        <div class="vacio" id="v-local">Pulsa «Iniciar transmisión» y permite el acceso a la cámara.</div></div>
+    </section>
+    <section>
+      <h2>Lo que procesa el servidor</h2>
+      <div class="pantalla" id="p-serv"><img id="procesado" alt="Video procesado por el servidor con detecciones"></div>
+    </section>
+  </div>
+  <div class="lecturas-tx">
+    <span><b id="l-env">0</b>cuadros/s enviados</span>
+    <span><b id="l-proc">0</b>cuadros/s procesados</span>
+    <span><b id="l-pers">0</b>personas</span>
+    <span><b id="l-kb">0</b>KB por cuadro</span>
+    <span><b id="l-lat">–</b>ms de ida y vuelta</span>
+  </div>
+  <p style="color:var(--tinta-2);font-size:14px;margin-top:16px;max-width:80ch">
+    Consejos: fija el celular en alto (trípode o soporte), mirando las puertas de modo que se vean los pies de las personas a ambos lados.
+    Conéctalo a la corriente y no lo bloquees: la pantalla se mantiene encendida mientras transmites. Dibuja las zonas y puertas de esta cámara desde la página Cámaras una vez esté transmitiendo.</p>
+</main>
+<script src="js/common.js"></script>
+<script>
+if (TE.montar('transmitir.html')) {
+  const $ = (id) => document.getElementById(id);
+  let stream = null, ws = null, activo = false, wakeLock = null, timerProc = null;
+  const lienzo = document.createElement('canvas'), ctx = lienzo.getContext('2d');
+  let enviados = 0, t0 = performance.now(), ultimoEnvio = 0, enEspera = false, ultimaEnvioTs = 0;
+
+  if (!window.isSecureContext) $('aviso-https').classList.remove('oculto');
+
+  async function cargarCamaras() {
+    try {
+      const cams = (await TE.get('/api/camaras')).filter(c => c.navegador);
+      $('t-cam').innerHTML = cams.map(c => `<option value="${c.id}">${TE.esc(c.codigo)} · ${TE.esc(c.estacion)}</option>`).join('');
+      $('aviso-sin').classList.toggle('oculto', cams.length > 0);
+      $('t-boton').disabled = !cams.length || !TE.puede('supervisor');
+      const pedida = new URLSearchParams(location.search).get('cam');
+      if (pedida && cams.some(c => String(c.id) === pedida)) $('t-cam').value = pedida;
+    } catch (e) { TE.error(e); }
+  }
+
+  async function listarDispositivos() {
+    try {
+      const ds = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+      const actual = $('t-disp').value;
+      $('t-disp').innerHTML = '<option value="">Trasera (recomendada)</option>' +
+        ds.map((d, i) => `<option value="${d.deviceId}">${TE.esc(d.label || 'Cámara ' + (i + 1))}</option>`).join('');
+      $('t-disp').value = actual;
+    } catch (e) {}
+  }
+
+  async function abrirCamara() {
+    if (stream) stream.getTracks().forEach(t => t.stop());
+    const ancho = +$('t-cal').value, disp = $('t-disp').value;
+    const video = disp ? { deviceId: { exact: disp } } : { facingMode: { ideal: 'environment' } };
+    Object.assign(video, { width: { ideal: ancho }, height: { ideal: Math.round(ancho * 0.75) } });
+    stream = await navigator.mediaDevices.getUserMedia({ video, audio: false });
+    $('video').srcObject = stream;
+    await $('video').play();
+    $('v-local').classList.add('oculto');
+    listarDispositivos();
+  }
+
+  function conectar() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/ws/transmitir/${$('t-cam').value}?token=${encodeURIComponent(TE.token())}`);
+    ws.binaryType = 'arraybuffer';
+    ws.onopen = () => { enEspera = false; $('p-local').classList.add('vivo'); $('r-local').textContent = 'Transmitiendo'; enviarSiguiente(); };
+    ws.onmessage = (m) => {
+      enEspera = false;
+      try {
+        const d = JSON.parse(m.data);
+        $('l-proc').textContent = d.fps ?? 0; $('l-pers').textContent = d.personas ?? 0;
+        $('l-lat').textContent = Math.round(performance.now() - ultimaEnvioTs);
+      } catch (e) {}
+      enviarSiguiente();
+    };
+    ws.onclose = (e) => {
+      $('p-local').classList.remove('vivo');
+      if (!activo) return;
+      if (e.code === 4401) { detener(); return TE.error(new Error('Tu usuario no puede transmitir (requiere supervisor o administrador) o la sesión expiró.')); }
+      if (e.code === 4404) { detener(); return TE.error(new Error('Esa cámara no existe o no es de tipo navegador.')); }
+      $('r-local').textContent = 'Reconectando…';
+      setTimeout(() => activo && conectar(), 2000);
+    };
+  }
+
+  // Control de flujo: se envía un cuadro, se espera el ack del servidor y se respeta el FPS elegido
+  function enviarSiguiente() {
+    if (!activo || !ws || ws.readyState !== 1 || enEspera) return;
+    const intervalo = 1000 / +$('t-fps').value, espera = ultimoEnvio + intervalo - performance.now();
+    if (espera > 0) return setTimeout(enviarSiguiente, espera);
+    const v = $('video');
+    if (!v.videoWidth) return setTimeout(enviarSiguiente, 100);
+    const ancho = Math.min(+$('t-cal').value, v.videoWidth), alto = Math.round(v.videoHeight * ancho / v.videoWidth);
+    lienzo.width = ancho; lienzo.height = alto;
+    ctx.drawImage(v, 0, 0, ancho, alto);
+    enEspera = true; ultimoEnvio = performance.now();
+    lienzo.toBlob(async (b) => {
+      if (!b || !ws || ws.readyState !== 1) { enEspera = false; return; }
+      ultimaEnvioTs = performance.now();
+      ws.send(await b.arrayBuffer());
+      enviados++;
+      $('l-kb').textContent = Math.round(b.size / 1024);
+      const dt = (performance.now() - t0) / 1000;
+      if (dt >= 1) { $('l-env').textContent = (enviados / dt).toFixed(1); enviados = 0; t0 = performance.now(); }
+    }, 'image/jpeg', 0.72);
+  }
+
+  function verProcesado() {
+    const img = $('procesado'), n = new Image();
+    n.onload = () => { img.src = n.src; };
+    n.src = TE.conToken(`/api/camaras/${$('t-cam').value}/frame.jpg?t=${Date.now()}`);
+  }
+
+  async function iniciar() {
+    if (!navigator.mediaDevices?.getUserMedia) return TE.error(new Error('Este navegador no permite usar la cámara aquí (se necesita https).'));
+    $('t-boton').disabled = true;
+    try { await abrirCamara(); }
+    catch (e) {
+      $('t-boton').disabled = false;
+      return TE.error(new Error(e.name === 'NotAllowedError' ? 'Se negó el permiso de cámara. Habilítalo en la configuración del navegador.' : 'No se pudo abrir la cámara: ' + e.message));
+    }
+    activo = true;
+    try { wakeLock = await navigator.wakeLock?.request('screen'); } catch (e) {}
+    conectar();
+    timerProc = setInterval(verProcesado, 400);
+    $('t-boton').textContent = 'Detener transmisión'; $('t-boton').classList.replace('primario', 'peligro'); $('t-boton').disabled = false;
+    ['t-cam', 't-cal'].forEach(id => $(id).disabled = true);
+  }
+
+  function detener() {
+    activo = false;
+    ws?.close(); ws = null;
+    stream?.getTracks().forEach(t => t.stop()); stream = null;
+    wakeLock?.release?.(); wakeLock = null;
+    clearInterval(timerProc);
+    $('r-local').textContent = 'Cámara apagada'; $('v-local').classList.remove('oculto');
+    $('t-boton').textContent = 'Iniciar transmisión'; $('t-boton').classList.replace('peligro', 'primario');
+    ['t-cam', 't-cal'].forEach(id => $(id).disabled = false);
+  }
+
+  $('t-boton').onclick = () => activo ? detener() : iniciar();
+  $('t-disp').onchange = () => { if (activo) abrirCamara().catch(TE.error); };
+  // El bloqueo de pantalla se libera al cambiar de app; se vuelve a pedir al regresar
+  document.addEventListener('visibilitychange', async () => {
+    if (activo && document.visibilityState === 'visible') { try { wakeLock = await navigator.wakeLock?.request('screen'); } catch (e) {} }
+  });
+  window.addEventListener('beforeunload', () => activo && detener());
+  cargarCamaras();
+}
+</script>
+</body>
+</html>

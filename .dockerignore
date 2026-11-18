@@ -1,0 +1,8 @@
+data
+videos/*.mp4
+videos/*.avi
+videos/*.mkv
+videos/*.mov
+backend/.venv
+**/__pycache__
+.git

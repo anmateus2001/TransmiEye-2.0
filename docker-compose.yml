@@ -1,0 +1,32 @@
+# Uso:  DOMINIO=midominio.com TRANSMIEYE_ADMIN_PASS='clave-segura' docker compose up -d --build
+services:
+  transmieye:
+    build: .
+    restart: unless-stopped
+    environment:
+      - TRANSMIEYE_ADMIN_PASS=${TRANSMIEYE_ADMIN_PASS:-}
+    volumes:
+      - ./data:/app/data          # base de datos, evidencias y reportes (persisten al reiniciar)
+      - ./videos:/app/videos      # videos de prueba
+      - ./modelos:/app/modelos    # modelos YOLO descargados
+    expose:
+      - "8000"
+
+  caddy:                          # HTTPS automático con Let's Encrypt (la cámara del celular lo exige)
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMINIO=${DOMINIO:?Define DOMINIO, por ejemplo 129-146-10-20.sslip.io}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - transmieye
+
+volumes:
+  caddy_data:
+  caddy_config:
