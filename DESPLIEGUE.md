@@ -29,7 +29,9 @@ Plataformas como Render o Railway no sirven en sus planes básicos: dan unos 512
    - **SSH keys:** *Generate a key pair for me* y **descarga la llave privada**. Sin ella no podrás entrar.
    - Pulsa **Create**.
 
-   Si aparece *Out of host capacity*, prueba otro *Availability domain* o inténtalo más tarde.
+   Si aparece *Out of host capacity*, Oracle no tiene máquinas libres en esa zona. Prueba otro *Availability domain* (AD-1, AD-2, AD-3), pide 1 OCPU y 6 GB, o inténtalo más tarde (en la noche suele haber más espacio). Es frecuente en regiones muy usadas como Ashburn. Pasar la cuenta a *Pay As You Go* da prioridad y los recursos Always Free siguen sin costo, pero cualquier recurso fuera del plan gratuito se cobra: si lo haces, crea una alerta de presupuesto de 1 USD en *Billing → Budgets*.
+
+   Si solo necesitas mostrar el sistema por un rato, no hace falta servidor: usa el link temporal desde tu PC descrito en el README (*Compartir un link desde tu PC*).
 3. Abre los puertos web. En la página de la instancia entra a la *Subnet → Security List → Add Ingress Rules* y agrega dos reglas:
    - Source `0.0.0.0/0`, protocolo TCP, puerto destino **80**.
    - Source `0.0.0.0/0`, protocolo TCP, puerto destino **443**.
