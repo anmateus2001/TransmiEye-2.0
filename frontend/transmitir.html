@@ -110,9 +110,12 @@ if (TE.montar('transmitir.html')) {
     listarDispositivos();
   }
 
+  // Id de esta página: identifica al dispositivo ante el servidor para que una reconexión recupere su cámara
+  const sesion = Math.random().toString(36).slice(2) + Date.now().toString(36);
+
   function conectar() {
     const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-    ws = new WebSocket(`${proto}://${location.host}/ws/transmitir/${$('t-cam').value}?token=${encodeURIComponent(TE.token())}`);
+    ws = new WebSocket(`${proto}://${location.host}/ws/transmitir/${$('t-cam').value}?token=${encodeURIComponent(TE.token())}&sesion=${sesion}`);
     ws.binaryType = 'arraybuffer';
     ws.onopen = () => { enEspera = false; $('p-local').classList.add('vivo'); $('r-local').textContent = 'Transmitiendo'; enviarSiguiente(); };
     ws.onmessage = (m) => {
@@ -128,7 +131,9 @@ if (TE.montar('transmitir.html')) {
       $('p-local').classList.remove('vivo');
       if (!activo) return;
       if (e.code === 4401) { detener(); return TE.error(new Error('Tu usuario no puede transmitir (requiere supervisor o administrador) o la sesión expiró.')); }
-      if (e.code === 4404) { detener(); return TE.error(new Error('Esa cámara no existe o no es de tipo navegador.')); }
+      if (e.code === 4404) { detener(); return TE.error(new Error('Esa cámara no existe (pudo ser eliminada) o no es de tipo navegador.')); }
+      if (e.code === 4409) { detener(); return TE.error(new Error('Otro celular o PC ya está transmitiendo a esta cámara. Detén esa transmisión o elige otra cámara.')); }
+      if (e.code === 4410) { detener(); return TE.error(new Error('Un supervisor detuvo esta cámara desde la página Cámaras. Vuelve a iniciar la transmisión cuando se reactive.')); }
       $('r-local').textContent = 'Reconectando…';
       setTimeout(() => activo && conectar(), 2000);
     };

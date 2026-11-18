@@ -1,23 +1,39 @@
 """Anonimización (Ley 1581 de 2012) y superposición de zonas/detecciones sobre el frame."""
 import datetime as dt
+import threading
 import unicodedata
+from pathlib import Path
 
 import cv2
 import numpy as np
 
-_cascada = None
+_CASCADA_LOCAL = Path(__file__).with_name("haarcascade_frontalface_default.xml")
+_ruta_cascada = None            # se resuelve una vez; "" = no hay detector disponible
+_por_hilo = threading.local()   # un clasificador por hilo de cámara (no es seguro compartirlo)
 
 
 def _detector_rostros():
-    global _cascada
-    if _cascada is None:
+    """Detector Haar de rostros. Se incluye el XML en el proyecto porque OpenCV 5 ya no lo trae
+    en cv2.data; si faltara, se intenta la copia de OpenCV y, si tampoco está, solo se pixela la
+    cabeza de cada persona detectada."""
+    global _ruta_cascada
+    if _ruta_cascada is None:
+        candidatas = [str(_CASCADA_LOCAL)]
+        datos = getattr(getattr(cv2, "data", None), "haarcascades", None)
+        if datos:
+            candidatas.append(datos + "haarcascade_frontalface_default.xml")
+        _ruta_cascada = next((r for r in candidatas if Path(r).is_file()), "")
+    if not _ruta_cascada:
+        return None
+    c = getattr(_por_hilo, "cascada", None)
+    if c is None:
         try:
-            ruta = cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
-            c = cv2.CascadeClassifier(ruta)
-            _cascada = c if not c.empty() else False
+            c = cv2.CascadeClassifier(_ruta_cascada)
+            c = c if not c.empty() else False
         except Exception:
-            _cascada = False
-    return _cascada or None
+            c = False
+        _por_hilo.cascada = c
+    return c or None
 
 
 def _pixelar(img, x1, y1, x2, y2, bloques=7):

@@ -42,7 +42,7 @@ DEFAULTS = {
     "modelo": "yolov8n.pt",       # yolov8n/s/m.pt, yolo11n.pt ... o un .pt propio en /modelos
     "dispositivo": "auto",        # auto | cpu | cuda
     "tracker": "propio",          # propio (robusto a FPS bajos) | bytetrack (mejor con GPU y ≥15 FPS)
-    "imgsz": 960,              # 640 si el equipo es lento; 960 detecta mejor personas lejanas
+    "imgsz": 640,                # 640: rápido, rinde con varias cámaras en CPU; 960 detecta mejor a lo lejos (mejor con GPU)
     "conf_persona": 0.30,
     "conf_vehiculo": 0.40,
     "clases_vehiculo": [5, 7],    # COCO: 5 bus, 7 truck (6 train confunde la estructura de la estación)

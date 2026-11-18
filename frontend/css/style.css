@@ -257,7 +257,9 @@ dl.ficha dd { font-weight: 500; word-break: break-word; }
 .banda.ambar { background: var(--ambar-suave); color: #6E4600; }
 .banda.rojo { background: var(--rojo-suave); color: var(--rojo); }
 .banda.azul { background: var(--azul-suave); color: #1F4E80; }
-#toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 200; width: min(380px, calc(100vw - 40px)); }
+#toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 10px; z-index: 200; width: min(380px, calc(100vw - 40px)); pointer-events: none; }
+/* Los avisos no bloquean los botones que quedan debajo (p. ej. Guardar de un formulario); sus propios botones y enlaces sí responden */
+.toast button, .toast a { pointer-events: auto; }
 .toast { background: var(--asfalto); color: #fff; padding: 12px 16px; border-radius: var(--r); box-shadow: 0 8px 24px rgba(0,0,0,.25); font-size: 14px; animation: entra .2s ease-out; }
 .toast.critica { background: var(--rojo); }
 .toast b { display: block; font-size: 15px; }

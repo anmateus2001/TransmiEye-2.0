@@ -12,25 +12,54 @@ import cv2
 import numpy as np
 
 FUENTE_NAVEGADOR = "navegador"
+OCUPADO = "ocupado"
+
+
+INACTIVO_S = 5.0     # sin cuadros durante este tiempo, la cámara queda libre para otro dispositivo
 
 
 class Canal:
+    """Un canal por cámara. Solo un dispositivo puede transmitir a la vez: si dos celulares enviaran a
+    la misma cámara, sus cuadros se intercalarían (dos escenas distintas) y el seguimiento fallaría."""
+
     def __init__(self):
         self.cond = threading.Condition()
         self.frame = None
         self.seq = 0
         self.ultimo = 0.0
-        self.emisor = None          # identificador de la conexión que transmite
+        self.emisor = None          # conexión dueña del canal
+        self.reclamado = 0.0
         self.recibidos = 0
 
-    def publicar(self, frame, emisor):
+    def _ocupado_por_otro(self, emisor) -> bool:
+        if self.emisor is None or self.emisor == emisor:
+            return False
+        return time.monotonic() - max(self.ultimo, self.reclamado) < INACTIVO_S
+
+    def reclamar(self, emisor) -> bool:
+        """Intenta tomar el canal para este dispositivo. False si otro transmite en este momento."""
         with self.cond:
+            if self._ocupado_por_otro(emisor):
+                return False
+            self.emisor, self.reclamado = emisor, time.monotonic()
+            return True
+
+    def liberar(self, emisor):
+        with self.cond:
+            if self.emisor == emisor:
+                self.emisor = None
+
+    def publicar(self, frame, emisor) -> bool:
+        with self.cond:
+            if self._ocupado_por_otro(emisor):
+                return False
             self.frame = frame
             self.seq += 1
             self.ultimo = time.monotonic()
             self.emisor = emisor
             self.recibidos += 1
             self.cond.notify_all()
+            return True
 
     def esperar(self, ultimo_seq, timeout):
         """Devuelve (frame, seq) del siguiente cuadro o (None, ultimo_seq) si no llegó a tiempo."""
@@ -45,7 +74,7 @@ class Canal:
 
     @property
     def activo(self):
-        return self.frame is not None and time.monotonic() - self.ultimo < 5.0
+        return self.frame is not None and time.monotonic() - self.ultimo < INACTIVO_S
 
 
 class HubNavegador:
@@ -57,11 +86,13 @@ class HubNavegador:
         with self._lock:
             return self._canales.setdefault(cam_id, Canal())
 
-    def publicar_jpeg(self, cam_id: int, datos: bytes, emisor) -> tuple[int, int] | None:
+    def publicar_jpeg(self, cam_id: int, datos: bytes, emisor):
+        """Devuelve (ancho, alto), None si el JPEG no es válido u OCUPADO si otro dispositivo transmite."""
         frame = cv2.imdecode(np.frombuffer(datos, dtype=np.uint8), cv2.IMREAD_COLOR)
         if frame is None:
             return None
-        self.canal(cam_id).publicar(frame, emisor)
+        if not self.canal(cam_id).publicar(frame, emisor):
+            return OCUPADO
         return frame.shape[1], frame.shape[0]
 
     def estado(self, cam_id: int) -> dict:

@@ -4,9 +4,9 @@ Sistema de detección en tiempo real de personas que entran a las estaciones de 
 
 ## 1. Instalación
 
-Requisitos: Python 3.10 a 3.12 (recomendado 3.12; al instalarlo marca **"Add python.exe to PATH"**). Una GPU NVIDIA es opcional, pero multiplica la velocidad.
+Requisitos: Python 3.10 a 3.12. Una GPU NVIDIA es opcional, pero multiplica la velocidad.
 
-**Windows:** doble clic en `iniciar_windows.bat`. La primera vez crea un entorno virtual en `backend\.venv` e instala todo (varios cientos de MB, sobre todo PyTorch; tarda entre 10 y 20 minutos). Las siguientes veces solo arranca. La ventana debe quedar abierta mientras se usa el sistema.
+**Windows:** doble clic en `iniciar_windows.bat`. La primera vez crea un entorno virtual e instala todo (unos 2 GB por PyTorch). Las siguientes veces solo arranca.
 
 **Linux / macOS:** `./iniciar_linux.sh`
 
@@ -21,34 +21,15 @@ python run.py                     # http://localhost:8000
 python run.py --red               # para entrar desde otros equipos de la red
 ```
 
-**Con GPU NVIDIA:** en Windows, `pip` instala por defecto PyTorch **sin** soporte de GPU. Después de la primera instalación, reemplázalo dentro del entorno virtual con la versión CUDA que indique https://pytorch.org/get-started/locally/, por ejemplo:
+**Con GPU NVIDIA:** instala primero PyTorch con CUDA desde https://pytorch.org/get-started/locally/ (por ejemplo `pip install torch --index-url https://download.pytorch.org/whl/cu124`) y después `pip install -r requirements.txt`. En Configuración → Sistema verás el nombre de la GPU.
 
-```
-backend\.venv\Scripts\pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu124
-```
+Si PyTorch o Ultralytics no se pueden instalar, el sistema sigue funcionando con detección por movimiento (MOG2). Es menos precisa y no reconoce buses.
 
-En *Configuración → Sistema* debe aparecer el nombre de la GPU.
-
-Si PyTorch o Ultralytics no se pueden instalar, el sistema sigue funcionando con detección por movimiento (MOG2). Es menos precisa y solo distingue buses de forma aproximada, por su tamaño.
-
-### Compartir un link desde tu PC (demostraciones)
-
-Con el sistema corriendo, puedes darle un link público `https://...` temporal, sin cuenta ni configuración, usando un túnel rápido de Cloudflare:
-
-```
-winget install --id Cloudflare.cloudflared          (solo la primera vez)
-cloudflared tunnel --url http://localhost:8000
-```
-
-En lo que imprime la ventana aparece un link terminado en `.trycloudflare.com`. Cualquiera puede abrirlo desde otro PC o celular, y como es https, el celular puede usarse como cámara desde *Transmitir cámara*. El link funciona solo mientras tu PC esté encendido con las dos ventanas abiertas, y **cambia cada vez** que vuelves a ejecutar `cloudflared`. Antes de compartirlo, cambia la contraseña de `admin`.
-
-### Publicarlo en un servidor
-
-Para que funcione con tu PC apagado, sigue la guía [DESPLIEGUE.md](DESPLIEGUE.md): servidor en la nube con Docker y HTTPS automático.
+**Publicarlo en internet** (servidor en la nube, sin depender de tu PC y con la cámara de un celular): sigue la guía [DESPLIEGUE.md](DESPLIEGUE.md).
 
 ## 2. Primeros pasos
 
-1. Abre http://localhost:8000 e ingresa con **admin / admin123**. Cambia la contraseña en *Configuración → Mi cuenta*. En un servidor la contraseña inicial es la que defines al instalar (variable `TRANSMIEYE_ADMIN_PASS`), no `admin123`.
+1. Abre http://localhost:8000 e ingresa con **admin / admin123**. Cambia la contraseña en *Configuración → Mi cuenta*.
 2. En **Cámaras → Agregar cámara**, elige el origen del video:
    - **Cámara USB:** el número 0 es la primera webcam conectada.
    - **Cámara IP:** su URL RTSP o HTTP. Ejemplos:
@@ -57,7 +38,7 @@ Para que funcione con tu PC apagado, sigue la guía [DESPLIEGUE.md](DESPLIEGUE.m
      - Celular con la app *IP Webcam* (Android): `http://IP-del-celular:8080/video`. Es una forma barata de tener una cámara de prueba.
    - **Archivo de video:** súbelo desde el formulario o cópialo a la carpeta `videos/`. Se reproduce en bucle a velocidad real, como una cámara en vivo.
    - **Celular o navegador:** el video llega desde la página *Transmitir cámara*, abierta en un celular o PC con cámara. Funciona aunque el servidor esté en la nube; requiere https (o localhost) y un usuario supervisor o admin.
-3. Usa **Probar conexión** y luego guarda. La cámara empieza a procesarse de inmediato; una cámara de tipo *Celular o navegador* queda «esperando transmisión» hasta que alguien inicie la transmisión desde su dispositivo.
+3. Usa **Probar conexión** y luego guarda. La cámara empieza a procesarse de inmediato.
 4. Abre **Zonas y puertas** y marca con clics sobre la imagen:
    - **Carril (fuera):** la vía frente a las puertas, hasta el borde de la puerta.
    - **Plataforma (dentro):** el piso de la estación justo detrás de las puertas.
@@ -80,7 +61,7 @@ En ambos casos lo que importa es que se vean **los pies** de las personas a los 
 Cada cámara corre en su propio hilo:
 
 ```
-captura (USB, RTSP/HTTP, archivo o navegador; con reconexión automática)
+captura (USB/RTSP/archivo, con reconexión automática)
   → YOLO detecta personas y buses
   → seguimiento: cada persona conserva un ID entre cuadros
   → reglas sobre el punto de los pies de cada persona
@@ -95,7 +76,7 @@ Un cruce se detecta de dos formas complementarias y se cuenta **una sola vez por
 | Evento | Regla | Nivel |
 |---|---|---|
 | **Ingreso por puerta lateral** | Los pies pasan de *carril* a *plataforma*, o cruzan la línea en el sentido de la flecha, sin bus en la bahía ni recién salido | Crítica |
-| Persona en el carril | Más de N segundos en el carril sin bus (requiere las zonas, no basta la línea de puerta) | Media |
+| Persona en el carril | Más de N segundos en el carril sin bus | Media |
 | Salida por puerta lateral | Pasa de *plataforma* a *carril*, o cruza la línea contra la flecha, sin bus. Cada persona cuenta: no hay pausa entre salidas | Media |
 | Aglomeración en puertas | N o más personas en la plataforma durante 5 s | Baja |
 
@@ -117,9 +98,9 @@ Un lado solo se confirma tras varios cuadros seguidos, así que el ruido de un s
 
 Estos eventos salen marcados como *ID recuperado tras oclusión* y con 15 % menos de confianza, para que el operador los revise con el clip.
 
-Estos criterios se calibraron mirando empalmes reales. Una primera versión más permisiva (1,5 s, velocidad de trote) llegó a unir personas distintas, e incluso un muñeco gigante detectado como persona. Con los criterios actuales, en un video de multitud el empalme actuó 8 veces en 76 segundos (unas 6 por minuto) y, revisados uno por uno, la mayoría correspondía a la misma persona. Se puede desactivar con 0 en *Recuperar personas tapadas por la puerta*.
+Estos criterios se calibraron mirando empalmes reales. Una primera versión más permisiva (1,5 s, velocidad de trote) llegó a unir personas distintas, e incluso un muñeco gigante detectado como persona. Con los criterios actuales, en un video de multitud el empalme actúa unas 8 veces por minuto y la mayoría corresponde a la misma persona. Se puede desactivar con 0 en *Recuperar personas tapadas por la puerta*.
 
-**Por qué no se usa la clase «tren» de YOLO:** al probar con las fotos de las estaciones, YOLO detectó correctamente el bus rojo como `bus`, pero clasificó la estructura de la estación como `train`, con una caja que cubría cerca del 70 % de la imagen. Por eso solo cuentan `bus` y `truck` como vehículo. Es configurable.
+**Por qué no se usa la clase «tren» de YOLO:** al probar con las fotos de las estaciones, YOLO detectó correctamente el bus rojo como `bus`, pero clasificó la estructura de la estación como `train` sobre el 75 % de la imagen. Por eso solo cuentan `bus` y `truck` como vehículo. Es configurable.
 
 **Seguimiento:** en CPU la inferencia suele correr a 4–15 FPS. A esos FPS, ByteTrack dejaba sin pista a cerca de la mitad de las personas, porque necesita dos cuadros seguidos parecidos para confirmar una pista nueva. Por eso el sistema usa por defecto un tracker propio:
 
@@ -138,10 +119,12 @@ Todo se ajusta en *Configuración → Detección* y se aplica en caliente.
 | Si pasa esto | Prueba |
 |---|---|
 | No detecta personas lejanas | Subir *Tamaño de inferencia* a 960 o 1280, bajar *Confianza para personas* a 0.25, o usar `yolov8s.pt` |
-| Va lento (FPS bajos) | Bajar el tamaño de inferencia a 640 o el ancho de procesamiento a 800, o usar GPU |
+| Va lento (FPS bajos) | Verificar que el tamaño de inferencia sea 640 (valor por defecto), bajar el ancho de procesamiento a 800, detener cámaras que no se usen o usar GPU |
 | Alerta cuando la gente se baja del bus | Subir *Segundos de gracia* o dibujar la *Bahía del bus* |
 | Demasiadas alertas de «persona en el carril» | Subir *Segundos en el carril* o la *Pausa entre alertas* |
 | Eventos sin alerta | Bajar *Confianza mínima para alertar* |
+
+**Varias cámaras a la vez.** Todas las cámaras comparten el procesador, así que cada una procesa menos cuadros por segundo. Para detectar cruces rápidos por una puerta conviene que cada cámara procese al menos 3 cuadros/s; si baja de eso, la tarjeta de la cámara lo avisa. Medido en un equipo de solo 2 núcleos, con tamaño de inferencia 640: una cámara de celular procesa ~7,8 cuadros/s y tres celulares a la vez ~7 cada uno; con tres celulares y dos videos de 1920×1440 los celulares bajan a ~3,3 y los videos a ~1,3. Un equipo de 4 a 8 núcleos debería procesar más cuadros por cámara. Cada cámara de navegador acepta un solo dispositivo transmitiendo: si otro celular intenta usar la misma cámara, se le rechaza con un aviso.
 | No cuenta a quien cruza muy rápido | Dibujar una línea de puerta; bajar *Distancia mínima a la línea* a 0.1 |
 | Cuenta a gente parada en la puerta | Subir *Distancia mínima a la línea* a 0.25 o *Cuadros para confirmar un lado* a 3 |
 | Une personas distintas en multitudes | Bajar *Recuperar personas tapadas por la puerta* a 0.5 o a 0 |
@@ -161,20 +144,16 @@ backend/
   app/events.py           guardado de evidencia, hash y alertas en tiempo real
   app/reports.py          reportes PDF
   app/maintenance.py      purga automática por retención
-  app/vision/source.py    captura con reconexión (USB, RTSP/HTTP, archivo)
-  app/vision/navegador.py cámaras que transmiten desde un celular o navegador
+  app/vision/source.py    captura con reconexión
   app/vision/detectors.py YOLO, trackers, detector de movimiento
   app/vision/analyzer.py  zonas y reglas de puertas laterales
   app/vision/render.py    anonimización y video anotado
   app/vision/worker.py    hilo por cámara
   tests/                  pruebas del motor de reglas
 frontend/                 interfaz web (HTML, CSS y JS sin dependencias)
-  transmitir.html         página para usar un celular o PC como cámara
 modelos/                  pesos YOLO (.pt)
 videos/                   videos de prueba
-data/                     base de datos, evidencias y reportes (se crea solo; no se sube a GitHub)
-Dockerfile, docker-compose.yml, Caddyfile, desplegar.sh   despliegue en servidor con HTTPS
-DESPLIEGUE.md             guía de publicación en internet
+data/                     base de datos, evidencias y reportes (se crea solo)
 ```
 
 - **Documentación interactiva de la API:** http://localhost:8000/docs
@@ -185,7 +164,7 @@ DESPLIEGUE.md             guía de publicación en internet
 
 | Requisito | Dónde está |
 |---|---|
-| RF01 Captura de video (RTSP), RF09 Gestión de cámaras | Página Cámaras; `source.py`; además celular o navegador con `navegador.py` |
+| RF01 Captura de video (RTSP), RF09 Gestión de cámaras | Página Cámaras; `source.py` |
 | RF02 Detección de personas YOLO, RF03 ROI | `detectors.py`; editor de zonas |
 | RF04 Detección de evasión | `analyzer.py`, adaptado a puertas laterales |
 | RF05 Registro de eventos, RF06 Alertas | `events.py`; WebSocket; página Alertas |
@@ -193,7 +172,7 @@ DESPLIEGUE.md             guía de publicación en internet
 | RF08 Dashboard, RF16 Estadísticas | Panel |
 | RF10 Historial con filtros, RF11 Confirmación manual | Historial y detalle del evento |
 | RF12 Reportes PDF | Reportes |
-| RF13 Usuarios y roles, RF14 Autenticación | Configuración → Usuarios; bcrypt + JWT; bloqueo de 10 min tras 5 intentos fallidos desde la misma IP |
+| RF13 Usuarios y roles, RF14 Autenticación | Configuración → Usuarios; bcrypt + JWT |
 | RF15 / RNF15 Logs técnicos y de acceso | Configuración → Registros |
 | RF17 Umbrales configurables | Configuración → Detección |
 | RF18 Exportación de evidencia | Botón *Exportar evidencia* (ZIP con SHA-256) |

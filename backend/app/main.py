@@ -31,7 +31,7 @@ from .stats import filas_eventos, por_estacion_detalle, resumen
 from .vision.analyzer import TIPOS_ZONA
 from .vision.manager import GestorCamaras
 from .vision.render import placeholder
-from .vision.navegador import FUENTE_NAVEGADOR, HUB as HUB_NAV
+from .vision.navegador import FUENTE_NAVEGADOR, OCUPADO, HUB as HUB_NAV
 from .vision.source import FuenteVideo, probar_fuente
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S")
@@ -933,10 +933,25 @@ async def ws_transmitir(ws: WebSocket, cid: int):
         await ws.close(code=4404)
         return
     await ws.accept()
-    if not activa or gestor.worker(cid) is None:
+    # Identidad del dispositivo: la página Transmitir envía un id de sesión estable, así una reconexión
+    # tras un corte de red recupera su propia cámara aunque el servidor no haya notado la caída anterior
+    sesion = (ws.query_params.get("sesion") or "")[:64]
+    emisor = f"{u.id}:{sesion}" if sesion else object()
+    canal = HUB_NAV.canal(cid)
+    if not canal.reclamar(emisor):
+        # Otro celular o PC ya transmite a esta cámara: se rechaza para no mezclar dos escenas
+        await ws.close(code=4409)
+        return
+    if not activa:
+        with SessionLocal() as s:                # quien transmite enciende la cámara de forma explícita
+            c = s.get(Camara, cid)
+            if c is not None:
+                c.activa = True
+                s.commit()
+    if gestor.worker(cid) is None:
         await asyncio.to_thread(gestor.iniciar, cid)
     registrar_acceso(u.id, u.usuario, "transmitir_camara", codigo, ws.client.host if ws.client else None)
-    emisor = id(ws)
+    motivo = "Terminó la transmisión desde el navegador."
     try:
         while True:
             msg = await ws.receive()
@@ -949,13 +964,28 @@ async def ws_transmitir(ws: WebSocket, cid: int):
                 await ws.send_json({"error": "Cuadro demasiado grande"})
                 continue
             tam = await asyncio.to_thread(HUB_NAV.publicar_jpeg, cid, datos, emisor)
+            if tam == OCUPADO:
+                motivo = "Otro dispositivo tomó la transmisión de esta cámara."
+                await ws.close(code=4409)
+                break
             w = gestor.worker(cid)
+            if w is None:
+                # ¿Se detuvo o eliminó desde Cámaras, o solo se está reiniciando (edición, ajustes)?
+                with SessionLocal() as s:
+                    c = s.get(Camara, cid)
+                    existe, sigue_activa = c is not None, bool(c and c.activa)
+                if not sigue_activa:
+                    motivo = "La cámara se detuvo desde Cámaras." if existe else "La cámara fue eliminada."
+                    await ws.close(code=4410 if existe else 4404)
+                    break
             info = w.info() if w else {}
             await ws.send_json({"ok": tam is not None, "fps": info.get("fps", 0),
                                 "personas": (info.get("analisis") or {}).get("personas", 0)})
     except (WebSocketDisconnect, RuntimeError):
         pass
-    registrar_log("info", f"camara:{codigo}", "Terminó la transmisión desde el navegador.")
+    finally:
+        canal.liberar(emisor)
+    registrar_log("info", f"camara:{codigo}", motivo)
 
 
 # Interfaz web (debe montarse al final)

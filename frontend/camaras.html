@@ -57,6 +57,11 @@ if (TE.montar('camaras.html')) {
       else if (r.error && r.estado !== 'en_linea') aviso = `No se pudo conectar: ${TE.esc(r.error)}`;
       else if (r.estado === 'en_linea' && !a.zonas) aviso = 'Solo detecta personas: dibuja las zonas de carril y plataforma o una línea de puerta para activar las alertas.';
       else if (r.motor && r.motor.startsWith('Movimiento')) aviso = 'Usando detección por movimiento (YOLO no disponible). Revisa los registros en Configuración.';
+      else if (r.estado === 'en_linea' && r.frames > 30 && r.fps > 0 && r.fps < 3) {
+        const activas = camaras.filter(x => x.runtime && x.runtime.estado === 'en_linea').length;
+        aviso = `Procesa solo ${r.fps} cuadros/s: con menos de 3 un cruce rápido por la puerta puede no detectarse.
+          ${activas > 1 ? `Hay ${activas} cámaras activas compartiendo el procesador. ` : ''}Revisa que el «Tamaño de inferencia» en Configuración sea 640 o menos${activas > 1 ? ', o detén las cámaras que no uses' : ''}.`;
+      }
       el.querySelector('[data-aviso]').innerHTML = aviso ? `<div class="aviso-cam">${aviso}</div>` : '';
     });
   }
@@ -101,13 +106,24 @@ if (TE.montar('camaras.html')) {
     }
   });
 
-  // ── Vista ampliada (MJPEG) ─────────────────────────────────────
+  // ── Vista ampliada ─────────────────────────────────────────────
+  // Se piden cuadros sueltos (frame.jpg) en vez de un flujo MJPEG continuo: los túneles como Cloudflare
+  // Quick Tunnel no garantizan respuestas en streaming y además limitan las peticiones abiertas.
   function ampliar(c) {
-    let timer;
+    let timer, abierto = true;
     const m = TE.modal(`${c.codigo} · ${c.estacion}`, `
-      <div class="visor"><img id="stream" src="${TE.conToken(`/api/camaras/${c.id}/stream`)}" alt="Video en vivo de ${TE.esc(c.codigo)}"></div>
+      <div class="visor"><img id="stream" src="${TE.conToken(`/api/camaras/${c.id}/frame.jpg?t=${Date.now()}`)}" alt="Video en vivo de ${TE.esc(c.codigo)}"></div>
       <div class="lecturas" id="lect-amp" style="display:flex;gap:18px;flex-wrap:wrap;margin-top:12px;color:var(--tinta-2)"></div>`,
-      { ancho: true, alCerrar: () => { clearInterval(timer); m.$('#stream').src = ''; } });
+      { ancho: true, alCerrar: () => { abierto = false; clearInterval(timer); } });
+    const siguiente = () => {
+      if (!abierto) return;
+      const n = new Image(), t = performance.now();
+      const otra = () => setTimeout(siguiente, Math.max(0, 100 - (performance.now() - t)));   // hasta ~10 cuadros/s
+      n.onload = () => { if (abierto) m.$('#stream').src = n.src; otra(); };
+      n.onerror = () => setTimeout(siguiente, 1000);
+      n.src = TE.conToken(`/api/camaras/${c.id}/frame.jpg?t=${Date.now()}`);
+    };
+    siguiente();
     const lect = async () => {
       try {
         const d = await TE.get(`/api/camaras/${c.id}`), r = d.runtime, a = r.analisis || {};
@@ -220,6 +236,7 @@ if (TE.montar('camaras.html')) {
     const m = TE.modal(`Zonas y puertas de ${c.codigo}`, `
       <div class="editor">
         <div>
+          <div class="banda" id="z-aviso" role="status" style="display:none;margin-bottom:10px;font-size:14px"></div>
           <div class="lienzo-envoltura"><canvas id="lienzo" width="960" height="540" aria-label="Imagen de la cámara para dibujar zonas"></canvas></div>
           <p style="margin-top:10px;color:var(--tinta-2);font-size:14px" id="z-instruccion"></p>
         </div>
@@ -237,7 +254,7 @@ if (TE.montar('camaras.html')) {
       </div>`, {
       ancho: true,
       pie: '<button class="btn" id="z-cancelar">Cancelar</button><button class="btn primario" id="z-guardar">Guardar</button>',
-      alCerrar: () => document.removeEventListener('keydown', tecla, true),
+      alCerrar: () => { document.removeEventListener('keydown', tecla, true); clearTimeout(reintento); },
     });
     const cv = m.$('#lienzo'), ctx = cv.getContext('2d');
     const px = ([x, y]) => [x * cv.width, y * cv.height];
@@ -302,12 +319,38 @@ if (TE.montar('camaras.html')) {
         <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px"><b style="min-width:30px">P${i + 1}</b>
         <button class="btn chico" data-inv="${i}">Invertir sentido</button><button class="btn chico texto" data-del="${i}">Quitar</button></div>`).join('')}</div>` : '';
     }
-    function cargarImagen() {
-      img = new Image();
-      img.onload = () => { cv.width = img.naturalWidth; cv.height = img.naturalHeight; dibujar(); };
-      img.onerror = () => TE.toast('No se pudo obtener imagen de la cámara. Verifica que esté conectada.', 'critica');
-      img.src = TE.conToken(`/api/camaras/${c.id}/snapshot.jpg?t=${Date.now()}`);
+    const esNavegador = String(c.fuente || '').trim().toLowerCase() === 'navegador';
+    let reintento = null;
+    function aviso(texto) {
+      const a = m.$('#z-aviso');
+      if (!a) return;
+      a.style.display = texto ? '' : 'none';
+      a.innerHTML = texto ? `${texto} <button class="btn chico" id="z-reintentar" style="margin-left:6px">Reintentar</button>` : '';
+      if (texto) m.$('#z-reintentar').onclick = cargarImagen;
+    }
+    async function cargarImagen() {
+      clearTimeout(reintento);
       dibujar();
+      try {
+        const r = await fetch(TE.conToken(`/api/camaras/${c.id}/snapshot.jpg?t=${Date.now()}`), { cache: 'no-store' });
+        if (!r.ok) {
+          let msg = 'No se pudo obtener imagen de la cámara.';
+          try { msg = (await r.json()).detail || msg; } catch (_) { /* respuesta sin JSON */ }
+          throw new Error(msg);
+        }
+        const url = URL.createObjectURL(await r.blob());
+        const nueva = new Image();
+        nueva.onload = () => { img = nueva; cv.width = img.naturalWidth; cv.height = img.naturalHeight; aviso(''); dibujar(); };
+        nueva.src = url;
+      } catch (err) {
+        if (!document.body.contains(m.el)) return;
+        if (esNavegador) {
+          aviso('Esperando video: abre «Transmitir cámara» en el celular o en este PC, elige esta cámara y pulsa Iniciar transmisión. La imagen aparecerá sola.');
+          reintento = setTimeout(cargarImagen, 3000);
+        } else {
+          aviso(err.message);
+        }
+      }
     }
     const punto = (e) => { const r = cv.getBoundingClientRect(); return [Math.min(Math.max((e.clientX - r.left) / r.width, 0), 1), Math.min(Math.max((e.clientY - r.top) / r.height, 0), 1)]; };
     const redondear = (p) => [+p[0].toFixed(4), +p[1].toFixed(4)];
